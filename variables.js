@@ -19,82 +19,169 @@
  */
 
 /**
- * @fileoverview Variable blocks for Blockly.
+ * @fileoverview Utility functions for handling variables.
  * @author fraser@google.com (Neil Fraser)
  */
 'use strict';
 
-goog.provide('Blockly.Blocks.variables');
+goog.provide('Blockly.Variables');
 
-goog.require('Blockly.Blocks');
+// TODO(scr): Fix circular dependencies
+// goog.require('Blockly.Block');
+goog.require('Blockly.Workspace');
+goog.require('goog.string');
 
 
 /**
- * Common HSV hue for all blocks in this category.
+ * Category to separate variable names from procedures and generated functions.
  */
-Blockly.Blocks.variables.HUE = 330;
+Blockly.Variables.NAME_TYPE = 'VARIABLE';
 
-Blockly.Blocks['variables_get'] = {
-  /**
-   * Block for variable getter.
-   * @this Blockly.Block
-   */
-  init: function() {
-    this.setHelpUrl(Blockly.Msg.VARIABLES_GET_HELPURL);
-    this.setColour(Blockly.Blocks.variables.HUE);
-    this.appendDummyInput()
-        .appendField(new Blockly.FieldVariable(
-        Blockly.Msg.VARIABLES_DEFAULT_NAME), 'VAR');
-    this.setOutput(true);
-    this.setTooltip(Blockly.Msg.VARIABLES_GET_TOOLTIP);
-    this.contextMenuMsg_ = Blockly.Msg.VARIABLES_GET_CREATE_SET;
-  },
-  contextMenuType_: 'variables_set',
-  /**
-   * Add menu option to create getter/setter block for this setter/getter.
-   * @param {!Array} options List of menu options to add to.
-   * @this Blockly.Block
-   */
-  customContextMenu: function(options) {
-    var option = {enabled: true};
-    var name = this.getFieldValue('VAR');
-    option.text = this.contextMenuMsg_.replace('%1', name);
-    var xmlField = goog.dom.createDom('field', null, name);
-    xmlField.setAttribute('name', 'VAR');
-    var xmlBlock = goog.dom.createDom('block', null, xmlField);
-    xmlBlock.setAttribute('type', this.contextMenuType_);
-    option.callback = Blockly.ContextMenu.callbackFactory(this, xmlBlock);
-    options.push(option);
+/**
+ * Find all user-created variables.
+ * @param {!Blockly.Block|!Blockly.Workspace} root Root block or workspace.
+ * @return {!Array.<string>} Array of variable names.
+ */
+Blockly.Variables.allVariables = function(root) {
+  var blocks;
+  if (root.getDescendants) {
+    // Root is Block.
+    blocks = root.getDescendants();
+  } else if (root.getAllBlocks) {
+    // Root is Workspace.
+    blocks = root.getAllBlocks();
+  } else {
+    throw 'Not Block or Workspace: ' + root;
   }
+  var variableHash = Object.create(null);
+  // Iterate through every block and add each variable to the hash.
+  for (var x = 0; x < blocks.length; x++) {
+    var blockVariables = blocks[x].getVars();
+    for (var y = 0; y < blockVariables.length; y++) {
+      var varName = blockVariables[y];
+      // Variable name may be null if the block is only half-built.
+      if (varName) {
+        variableHash[varName.toLowerCase()] = varName;
+      }
+    }
+  }
+  // Flatten the hash into a list.
+  var variableList = [];
+  for (var name in variableHash) {
+    variableList.push(variableHash[name]);
+  }
+  return variableList;
 };
 
-Blockly.Blocks['variables_set'] = {
-  /**
-   * Block for variable setter.
-   * @this Blockly.Block
-   */
-  init: function() {
-    this.jsonInit({
-      "message0": Blockly.Msg.VARIABLES_SET,
-      "args0": [
-        {
-          "type": "field_variable",
-          "name": "VAR",
-          "variable": Blockly.Msg.VARIABLES_DEFAULT_NAME
-        },
-        {
-          "type": "input_value",
-          "name": "VALUE"
+/**
+ * Find all instances of the specified variable and rename them.
+ * @param {string} oldName Variable to rename.
+ * @param {string} newName New variable name.
+ * @param {!Blockly.Workspace} workspace Workspace rename variables in.
+ */
+Blockly.Variables.renameVariable = function(oldName, newName, workspace) {
+  Blockly.Events.setGroup(true);
+  var blocks = workspace.getAllBlocks();
+  // Iterate through every block.
+  for (var i = 0; i < blocks.length; i++) {
+    blocks[i].renameVar(oldName, newName);
+  }
+  Blockly.Events.setGroup(false);
+};
+
+/**
+ * Construct the blocks required by the flyout for the variable category.
+ * @param {!Blockly.Workspace} workspace The workspace contianing variables.
+ * @return {!Array.<!Element>} Array of XML block elements.
+ */
+Blockly.Variables.flyoutCategory = function(workspace) {
+  var variableList = Blockly.Variables.allVariables(workspace);
+  variableList.sort(goog.string.caseInsensitiveCompare);
+  // In addition to the user's variables, we also want to display the default
+  // variable name at the top.  We also don't want this duplicated if the
+  // user has created a variable of the same name.
+  goog.array.remove(variableList, Blockly.Msg.VARIABLES_DEFAULT_NAME);
+  variableList.unshift(Blockly.Msg.VARIABLES_DEFAULT_NAME);
+
+  var xmlList = [];
+  for (var i = 0; i < variableList.length; i++) {
+    if (Blockly.Blocks['variables_set']) {
+      // <block type="variables_set" gap="8">
+      //   <field name="VAR">item</field>
+      // </block>
+      var block = goog.dom.createDom('block');
+      block.setAttribute('type', 'variables_set');
+      if (Blockly.Blocks['variables_get']) {
+        block.setAttribute('gap', 8);
+      }
+      var field = goog.dom.createDom('field', null, variableList[i]);
+      field.setAttribute('name', 'VAR');
+      block.appendChild(field);
+      xmlList.push(block);
+    }
+    if (Blockly.Blocks['variables_get']) {
+      // <block type="variables_get" gap="24">
+      //   <field name="VAR">item</field>
+      // </block>
+      var block = goog.dom.createDom('block');
+      block.setAttribute('type', 'variables_get');
+      if (Blockly.Blocks['variables_set']) {
+        block.setAttribute('gap', 24);
+      }
+      var field = goog.dom.createDom('field', null, variableList[i]);
+      field.setAttribute('name', 'VAR');
+      block.appendChild(field);
+      xmlList.push(block);
+    }
+  }
+  return xmlList;
+};
+
+/**
+* Return a new variable name that is not yet being used. This will try to
+* generate single letter variable names in the range 'i' to 'z' to start with.
+* If no unique name is located it will try 'i' to 'z', 'a' to 'h',
+* then 'i2' to 'z2' etc.  Skip 'l'.
+ * @param {!Blockly.Workspace} workspace The workspace to be unique in.
+* @return {string} New variable name.
+*/
+Blockly.Variables.generateUniqueName = function(workspace) {
+  var variableList = Blockly.Variables.allVariables(workspace);
+  var newName = '';
+  if (variableList.length) {
+    var nameSuffix = 1;
+    var letters = 'ijkmnopqrstuvwxyzabcdefgh';  // No 'l'.
+    var letterIndex = 0;
+    var potName = letters.charAt(letterIndex);
+    while (!newName) {
+      var inUse = false;
+      for (var i = 0; i < variableList.length; i++) {
+        if (variableList[i].toLowerCase() == potName) {
+          // This potential name is already used.
+          inUse = true;
+          break;
         }
-      ],
-      "previousStatement": null,
-      "nextStatement": null,
-      "colour": Blockly.Blocks.variables.HUE,
-      "tooltip": Blockly.Msg.VARIABLES_SET_TOOLTIP,
-      "helpUrl": Blockly.Msg.VARIABLES_SET_HELPURL
-    });
-    this.contextMenuMsg_ = Blockly.Msg.VARIABLES_SET_CREATE_GET;
-  },
-  contextMenuType_: 'variables_get',
-  customContextMenu: Blockly.Blocks['variables_get'].customContextMenu
+      }
+      if (inUse) {
+        // Try the next potential name.
+        letterIndex++;
+        if (letterIndex == letters.length) {
+          // Reached the end of the character sequence so back to 'i'.
+          // a new suffix.
+          letterIndex = 0;
+          nameSuffix++;
+        }
+        potName = letters.charAt(letterIndex);
+        if (nameSuffix > 1) {
+          potName += nameSuffix;
+        }
+      } else {
+        // We can use the current potential name.
+        newName = potName;
+      }
+    }
+  } else {
+    newName = 'i';
+  }
+  return newName;
 };
